@@ -3,11 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 #hyperparams
-batch_size = 4
-block_size = 32
-max_iters = 15000
+batch_size = 4         # B
+block_size = 32        # T
+max_iters = 20000
 eval_iters = 300
-learning_rate = 1e-2
+learning_rate = 1e-3
+
+n_embd = 32            # C
 
 torch.manual_seed(1337)
 
@@ -53,13 +55,42 @@ def get_batch(split):
     return x, y
 
 
-class BigramLangModel(nn.Module):
-    def __init__(self, v_size):
+class Head(nn.Module):
+    def __init__(self, head_size):
         super().__init__()
-        self.token_embedding_table = nn.Embedding(v_size, v_size)
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones((block_size, block_size))))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)
+        q = self.query(x)
+
+        wei = q @ k.transpose(-2, -1) * (C ** 0.5)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)
+
+        v = self.value(x)
+        out = wei @ v
+        return out
+
+class BigramLangModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.sa_head = Head(n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
-        logits = self.token_embedding_table(idx)  # B,T,C
+        B, T = idx.shape
+        token_emb = self.token_embedding_table(idx)  # B,T,C
+        pos_emb = self.position_embedding_table(torch.arange(T)) # T, C
+        x = token_emb + pos_emb  # B,T,C + *1,T,C -> B,T,C
+        x = self.sa_head(x)
+        logits = self.lm_head(x)  # B,T,V
 
         if targets is None:
             loss = None
@@ -74,22 +105,22 @@ class BigramLangModel(nn.Module):
     def generate(self, idx, max_new_tokens):
         # idx is (B, T). add T+1 into the T dimension
         for _ in range(max_new_tokens):
-            logit, loss = self(idx)
-            if logit.ndim == 3:
-                logit = logit[:, -1, :]
-            probs = F.softmax(logit, dim=-1)
+            idx_crop = idx[:, -block_size:]
+            logits, loss = self(idx_crop)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, idx_next), dim=1)
+            idx = torch.cat((idx , idx_next), dim=1)
 
         return idx
 
 
 xb, yb = get_batch('train')
-m = BigramLangModel(vocab_size)
-logits, loss = m(xb, yb)
+m = BigramLangModel()
 
 print('loss:', eval_model())
-print(decode(m.generate(torch.zeros((1, 1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
+context = torch.zeros((1, 1), dtype=torch.long)
+print(decode(m.generate(context, max_new_tokens=100)[0].tolist()))
 
 optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
 
@@ -101,5 +132,9 @@ for i in range(max_iters):
     loss.backward()
     optimizer.step()
 
+    if i % (max_iters/20) == 0:
+        print(f'{i}/{max_iters}: {loss}')
+
 print('loss:', eval_model())
-print(decode(m.generate(torch.zeros((1, 1), dtype=torch.long), max_new_tokens=300)[0].tolist()))
+context = torch.zeros((1, 1), dtype=torch.long)
+print(decode(m.generate(context, max_new_tokens=300)[0].tolist()))
