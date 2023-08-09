@@ -7,13 +7,13 @@ import matplotlib.pyplot as plt
 # hyperparams
 batch_size = 16  # B
 block_size = 128  # T
-max_iters = 5000
+max_iters = 15000
 eval_iters = 500
-learning_rate = 3e-4
+learning_rate = 1e-3
 
 n_embd = 32  # C
 n_head = 4
-n_layer = 4
+n_layer = 6
 dropout = 0.2
 
 torch.manual_seed(1337)
@@ -193,8 +193,8 @@ for i in range(max_iters):
     lossi.append(loss)
 
     if i % (max_iters / 20) == 0:
-        print(f'{i}/{max_iters} ({int(i*100/max_iters)}): {loss}')
         losses.append(torch.tensor(lossi).mean().item())
+        print(f'{i}/{max_iters} ({int(i*100/max_iters)}): {losses[-1]}')
         lossi = []
 
 plt.plot(losses)
