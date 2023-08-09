@@ -2,18 +2,23 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-#hyperparams
-batch_size = 4         # B
-block_size = 32        # T
-max_iters = 20000
-eval_iters = 300
-learning_rate = 1e-3
+import matplotlib.pyplot as plt
 
-n_embd = 32            # C
+# hyperparams
+batch_size = 16  # B
+block_size = 128  # T
+max_iters = 5000
+eval_iters = 500
+learning_rate = 3e-4
+
+n_embd = 32  # C
+n_head = 4
+n_layer = 4
+dropout = 0.2
 
 torch.manual_seed(1337)
 
-#set input data
+# set input data
 text = open('input.txt', 'r').read()
 chars = sorted(list(set(text)))
 vocab_size = len(chars)
@@ -41,6 +46,10 @@ def eval_model():
             X, Y = get_batch(split)
             logits, loss = m(X, Y)
             losses[k] = loss.item()
+
+            if k % (eval_iters/10) == 0:
+                print('.', end='')
+        print('')
         out[split] = losses.mean()
     m.train()
     return out
@@ -63,6 +72,8 @@ class Head(nn.Module):
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones((block_size, block_size))))
 
+        self.dropout = nn.Dropout(dropout)
+
     def forward(self, x):
         B, T, C = x.shape
         k = self.key(x)
@@ -72,32 +83,70 @@ class Head(nn.Module):
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)
 
+        wei = self.dropout(wei)
+
         v = self.value(x)
         out = wei @ v
         return out
+
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        return torch.cat([head(x) for head in self.heads], dim=-1)  # concat on channel dimension
+        out = torch.cat([head(x) for head in self.heads], dim=-1)  # concat on channel dimension
+        out = self.dropout(self.proj(out))
+        return out
 
-class BigramLangModel(nn.Module):
+
+class FeedForward(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class Block(nn.Module):
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x
+
+
+class GPT(nn.Module):
     def __init__(self):
         super().__init__()
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.sa_heads = MultiHeadAttention(4, n_embd//4)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
         token_emb = self.token_embedding_table(idx)  # B,T,C
-        pos_emb = self.position_embedding_table(torch.arange(T)) # T, C
+        pos_emb = self.position_embedding_table(torch.arange(T))  # T, C
         x = token_emb + pos_emb  # B,T,C + *1,T,C -> B,T,C
-        x = self.sa_heads(x)
+        x = self.blocks(x)
+        x = self.ln_f(x)
         logits = self.lm_head(x)  # B,T,V
 
         if targets is None:
@@ -118,19 +167,20 @@ class BigramLangModel(nn.Module):
             logits = logits[:, -1, :]
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx , idx_next), dim=1)
+            idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
 
 
 xb, yb = get_batch('train')
-m = BigramLangModel()
+m = GPT()
 
-print('loss:', eval_model())
-context = torch.zeros((1, 1), dtype=torch.long)
-print(decode(m.generate(context, max_new_tokens=100)[0].tolist()))
 
 optimizer = torch.optim.AdamW(m.parameters(), lr=1e-3)
+
+print('intial loss:', eval_model())
+losses = []
+lossi = []
 
 for i in range(max_iters):
     xb, yb = get_batch('train')
@@ -140,9 +190,22 @@ for i in range(max_iters):
     loss.backward()
     optimizer.step()
 
-    if i % (max_iters/20) == 0:
-        print(f'{i}/{max_iters}: {loss}')
+    lossi.append(loss)
+
+    if i % (max_iters / 20) == 0:
+        print(f'{i}/{max_iters} ({int(i*100/max_iters)}): {loss}')
+        losses.append(torch.tensor(lossi).mean().item())
+        lossi = []
+
+plt.plot(losses)
 
 print('loss:', eval_model())
 context = torch.zeros((1, 1), dtype=torch.long)
 print(decode(m.generate(context, max_new_tokens=300)[0].tolist()))
+
+context = torch.zeros((1, 1), dtype=torch.long)
+out = decode(m.generate(context, max_new_tokens=10000)[0].tolist())
+with open('output.txt', 'w') as file:
+    file.write(out)
+
+print('output written')
