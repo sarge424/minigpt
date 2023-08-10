@@ -1,13 +1,15 @@
 # minigpt
-Character level GPT implemented in pytorch
+A character level generative pretrained transformer implemented in python
 
 MiniGPT is a decoder-only model implemented in pytorch.
-It was trained on the Mini Shakespeare dataset and generates the next token based on the previously generated tokens.
+It was trained on the Tiny Shakespeare dataset (https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt) and generates the next token based on the previously generated tokens.
+
+To run the pretrained model (10M paramters, 5000 iterations of training), download this repository and run `load.py` to load weights and sample from the model
 
 While the model and dataset used are too small for the model to actually generate sentences that make sense,
-It generates sequences that sound very much like dialogues from a Shakespeare play.
+It generates sequences that have correct sentence structure as well as Shakespearean English grammar and vocabulary.
 
-A generated sequence (after 5000 iterations of training) is shown below:
+A generated sequence (from the sample model included) is shown below:
 ```
 CLARENCE:
 The duke hath power to Pomfret, and Warwick,
