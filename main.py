@@ -17,9 +17,7 @@ n_head = 6
 n_layer = 6
 dropout = 0.2
 
-model_filename = f'models/model{batch_size}-{block_size}-{n_embd}-{n_head}-{n_layer}-{max_iters}-{learning_rate:E}.pt'
-print('starting training for model', model_filename)
-torch.manual_seed(1337)
+model_filename = f'models/model{batch_size}-{block_size}-{n_embd}-{n_head}-{n_layer}-{max_iters}-{learning_rate:.0E}.pt'
 
 # set input data
 text = open('input.txt', 'r').read()
@@ -74,7 +72,7 @@ class Head(nn.Module):
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
-        self.register_buffer('tril', torch.tril(torch.ones((block_size, block_size)))
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
         self.dropout = nn.Dropout(dropout)
 
@@ -186,46 +184,47 @@ class GPT(nn.Module):
         return idx
 
 
-xb, yb = get_batch('train')
-model = GPT()
-m = model.to(device)
-print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
-m.train()
-
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-
-losses = []
-lossi = []
-start = time.time()
-
-for i in range(max_iters):
+if __name__ == '__main__':
     xb, yb = get_batch('train')
+    model = GPT()
+    m = model.to(device)
+    print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
+    m.train()
 
-    logits, loss = m(xb, yb)
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-    lossi.append(loss)
+    losses = []
+    lossi = []
+    start = time.time()
 
-    if i % (max_iters / 20) == 0:
-        losses.append(torch.tensor(lossi).mean().item())
-        print(f'{i}/{max_iters} ({int(i*100/max_iters)}%: {int(time.time()-start)}sec so far): {losses[-1]}')
-    if i % (max_iters / 100) == 0:
-        print('.', end='')
+    for i in range(max_iters):
+        xb, yb = get_batch('train')
 
-print('loss:', eval_model())
-m.eval()
-context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(m.generate(context, max_new_tokens=300)[0].tolist()))
+        logits, loss = m(xb, yb)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
 
-print('saving model', model_filename, '...')
-torch.save(m.state_dict(), model_filename)
-print('saved.')
+        lossi.append(loss)
 
-print('writing output...')
-out = decode(m.generate(context, max_new_tokens=1000)[0].tolist())
-with open('output.txt', 'w') as file:
-    file.write(out)
+        if i % (max_iters / 20) == 0:
+            losses.append(torch.tensor(lossi).mean().item())
+            print(f'{i}/{max_iters} ({int(i*100/max_iters)}%: {int(time.time()-start)}sec so far): {losses[-1]}')
+        if i % (max_iters / 100) == 0:
+            print('.', end='')
 
-print('output written')
+    print('loss:', eval_model())
+    m.eval()
+    context = torch.zeros((1, 1), dtype=torch.long, device=device)
+    print(decode(m.generate(context, max_new_tokens=300)[0].tolist()))
+
+    print('saving model', model_filename, '...')
+    torch.save(m.state_dict(), model_filename)
+    print('saved.')
+
+    print('writing output...')
+    out = decode(m.generate(context, max_new_tokens=1000)[0].tolist())
+    with open('output.txt', 'w') as file:
+        file.write(out)
+
+    print('output written')
